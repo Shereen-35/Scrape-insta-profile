@@ -26,7 +26,7 @@ creds_info = json.loads(json_str)
 creds = Credentials.from_service_account_info(creds_info, scopes=scope)
 gc = gspread.authorize(creds)
 
-app = Flask(_name_, template_folder='.')
+app = Flask(__name__, template_folder='.')
 
 SPREADSHEET_NAME = 'My Instagram Data'
 CREDENTIALS_WORKSHEET = 'Account Credentials'
