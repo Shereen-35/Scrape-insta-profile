@@ -17,6 +17,11 @@ creds_info = json.loads(json_str)
 creds = Credentials.from_service_account_info(creds_info, scopes=scope)
 
 gc = gspread.authorize(creds)
+# Ensure the session directory exists
+SESSION_DIRECTORY = "session"  # Directory to store session files
+
+if not os.path.exists(SESSION_DIRECTORY):
+    os.makedirs(SESSION_DIRECTORY)  # Create session directory if it does not exist
 
 app = Flask(__name__, template_folder='.')
 
