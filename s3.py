@@ -5,16 +5,23 @@ import gspread
 from google.oauth2.service_account import Credentials
 import time
 import random
-import os  # Import the 'os' module for file operations
-
+import json
+import os
+# Import the 'os' module for file operations
 scope = ['https://www.googleapis.com/auth/spreadsheets.readonly']
-creds = Credentials.from_service_account_file('insta-scrape-prof-url-0aefa077c9fb.json', scopes=scope)
+json_str = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+if json_str is None:
+    raise Exception("GOOGLE_CREDENTIALS_JSON environment variable not set")
+
+creds_info = json.loads(json_str)
+creds = Credentials.from_service_account_info(creds_info, scopes=scope)
+
 gc = gspread.authorize(creds)
 
 app = Flask(__name__)
 
 # --- Google Sheets Configuration ---
-CREDENTIALS_FILE = "insta-scrape-prof-url-0aefa077c9fb.json"
+
 SPREADSHEET_NAME = 'My Instagram Data'
 CREDENTIALS_WORKSHEET = 'Account Credentials'
 USERNAME_COL = 0
