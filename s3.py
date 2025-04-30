@@ -9,7 +9,7 @@ import json
 import os
 
 # --- Path Configuration ---
-BASE_DIR = os.path.dirname(os.path.abspath(_file_))
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSION_DIRECTORY = os.path.join(BASE_DIR, "session")
 SESSION_FILE_PREFIX = "session-"  # Instaloader's session file naming convention
 
