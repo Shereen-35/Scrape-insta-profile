@@ -19,14 +19,17 @@ This Flask application scrapes basic profile information from public Instagram p
 ```
 E:\instaloader\
 │
-├── s3.py                       # Main Flask application
-├── wsgi.py                     # Entry point for production (Waitress)
+.
+├── s3.py
+├── wsgi.py
+├── requirements.txt
+├── README.md
+├── .gitignore
+├── session/
+│   └── .gitkeep
 ├── templates/
-│   └── i2.html                 # Frontend HTML form
-├── session/                    # Folder to store Instaloader session files
-├── insta-scrape-prof-url-0aefa077c9fb.json   # Google Sheets service account credentials
-├── requirements.txt            # Python dependencies
-├── README.md                   # You're reading this!
+│   └── i2.html
+
 ```
 
 ---
