@@ -1,15 +1,15 @@
-from flask import Flask, render_template, request
+from flask import Flask, request, render_template
 from instaloader import Instaloader, Profile, exceptions
-import os
-import random
-import json
+from urllib.parse import urlparse
 import gspread
 from google.oauth2.service_account import Credentials
-from urllib.parse import urlparse
-from your_first_login_module import first_time_login  # Import the first-time login function
+import time
+import random
+import json
+import os
 
 # --- Path Configuration ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.abspath(_file_))
 SESSION_DIRECTORY = os.path.join(BASE_DIR, "session")
 SESSION_FILE_PREFIX = "session-"  # Instaloader's session file naming convention
 
@@ -26,7 +26,7 @@ creds_info = json.loads(json_str)
 creds = Credentials.from_service_account_info(creds_info, scopes=scope)
 gc = gspread.authorize(creds)
 
-app = Flask(__name__, template_folder='.')
+app = Flask(_name_, template_folder='.')
 
 SPREADSHEET_NAME = 'My Instagram Data'
 CREDENTIALS_WORKSHEET = 'Account Credentials'
@@ -89,39 +89,37 @@ def scrape_profile_data(loader, profile_url, username):
     except Exception as e:
         return {"error": str(e)}
 
-# --- First-Time Login (Refactored into Function) ---
-def first_time_login(username, password):
-    session_file = os.path.join(SESSION_DIRECTORY, f"session-{username}")
-    L = Instaloader()
-    L.context._session.headers['User-Agent'] = random.choice(USER_AGENTS)
-
+def attempt_login(loader, username, password):
+    session_file = os.path.join(SESSION_DIRECTORY, f"{SESSION_FILE_PREFIX}{username}")
     try:
-        print(f"[INFO] Logging in as {username}...")
-        L.login(username, password)
-        L.save_session_to_file(session_file)
-        print(f"[SUCCESS] Session saved to {session_file}")
-        return True
-    except exceptions.BadCredentialsException:
-        print("[ERROR] Invalid username or password.")
-        return False
-    except exceptions.TwoFactorAuthRequiredException:
-        print("[ERROR] 2FA is enabled. This script does not yet support 2FA.")
-        return False
-    except exceptions.ConnectionException as e:
-        print(f"[ERROR] Connection failed: {e}")
+        print(f"[DEBUG] Checking for session file at: {session_file}")
+        if os.path.exists(session_file):
+            loader.load_session_from_file(username, session_file)
+            print(f"[DEBUG] Loaded session for {username}")
+            return True
+        else:
+            print(f"[DEBUG] No session found. Logging in fresh for {username}")
+            loader.login(username, password)
+            loader.save_session_to_file(session_file)
+            print(f"[DEBUG] Logged in and saved session to: {session_file}")
+            return True
+    except exceptions.LoginRequiredException:
+        print(f"[WARN] Login required for {username}, checkpoint might be required.")
         return False
     except Exception as e:
-        print(f"[ERROR] Login failed: {e}")
+        print(f"[ERROR] Login failed for {username}: {e}")
         return False
 
-# --- Login and Session Check ---
-def load_or_login(username, password):
-    session_file = os.path.join(SESSION_DIRECTORY, f"session-{username}")
-    if not os.path.exists(session_file):
-        # Call the function to login for the first time and save the session
-        if not first_time_login(username, password):
-            return False  # Return failure if login fails
-    return True  # Return success if session is loaded or login is successful
+def logout_account(username):
+    session_file = os.path.join(SESSION_DIRECTORY, f"{SESSION_FILE_PREFIX}{username}")
+    try:
+        if os.path.exists(session_file):
+            os.remove(session_file)
+            print(f"[INFO] Removed session file for {username}")
+        else:
+            print(f"[DEBUG] No session file exists for {username}")
+    except Exception as e:
+        print(f"[ERROR] Error removing session for {username}: {e}")
 
 # --- Routes ---
 @app.route('/', methods=['GET'])
@@ -130,25 +128,57 @@ def index():
 
 @app.route('/scrape', methods=['POST'])
 def scrape_process():
-    # Get username, password from your credentials (e.g., Google Sheets or predefined)
-    credentials_list = get_credentials_from_sheet()
-    if not credentials_list:
-        return render_template('i2.html', error="Could not retrieve Instagram credentials.", scraped_data=None)
+    global current_account_index, scraping_in_progress, urls_to_scrape, urls_processed_with_current_account
+    global current_loader, current_username, scraped_data_queue
 
-    username, password = credentials_list[current_account_index]
-
-    # Attempt to login or load the session
-    if not load_or_login(username, password):
-        return render_template('i2.html', error="Login failed. Please check credentials.", scraped_data=None)
-
-    # Proceed with scraping logic
     profile_url = request.form.get('profileUrl')
     if not profile_url:
         return render_template('i2.html', error="Please enter a profile URL.", scraped_data=None)
 
-    data = scrape_profile_data(current_loader, profile_url, username)
-    return render_template('i2.html', scraped_data=data)
+    urls_to_scrape.append(profile_url)
+    credentials_list = get_credentials_from_sheet()
+    if not credentials_list:
+        return render_template('i2.html', error="Could not retrieve Instagram credentials.", scraped_data=None)
 
-if __name__ == '__main__':
+    if current_account_index < len(credentials_list):
+        username, password = credentials_list[current_account_index]
+
+        if not scraping_in_progress or current_username != username:
+            scraping_in_progress = True
+            current_username = username
+            current_loader = Instaloader()
+            current_loader.context._session.headers['User-Agent'] = random.choice(USER_AGENTS)
+            current_loader.max_connection_attempts = 3
+
+            logged_in = attempt_login(current_loader, username, password)
+            if not logged_in:
+                logout_account(username)
+                current_account_index += 1
+                scraping_in_progress = False
+                return render_template('i2.html', error=f"Login failed for {username}, trying next account.")
+
+        if urls_processed_with_current_account < urls_per_account_limit and urls_to_scrape:
+            url_to_process = urls_to_scrape.pop(0)
+            data = scrape_profile_data(current_loader, url_to_process, username)
+            urls_processed_with_current_account += 1
+            return render_template('i2.html', scraped_data=data)
+
+        if urls_processed_with_current_account >= urls_per_account_limit or not urls_to_scrape:
+            logout_account(username)
+            current_account_index += 1
+            urls_processed_with_current_account = 0
+            scraping_in_progress = False
+            return render_template('i2.html', message=f"Switched account from {username}.")
+
+    else:
+        # All accounts exhausted
+        current_account_index = 0
+        urls_processed_with_current_account = 0
+        scraping_in_progress = False
+        current_loader = None
+        current_username = None
+        return render_template('i2.html', message="All accounts used for current batch.")
+
+if _name_ == '_main_':
     app.run(debug=True)
 
