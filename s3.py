@@ -7,32 +7,33 @@ import time
 import random
 import json
 import os
-# Import the 'os' module for file operations
+
+# --- Path Configuration ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SESSION_DIRECTORY = os.path.join(BASE_DIR, "session")
+SESSION_FILE_PREFIX = "session-"  # Instaloader's session file naming convention
+
+# Ensure the session directory exists
+if not os.path.exists(SESSION_DIRECTORY):
+    os.makedirs(SESSION_DIRECTORY)
+
+# --- Google Sheets Setup ---
 scope = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 json_str = os.environ.get("GOOGLE_CREDENTIALS_JSON")
 if json_str is None:
     raise Exception("GOOGLE_CREDENTIALS_JSON environment variable not set")
-
 creds_info = json.loads(json_str)
 creds = Credentials.from_service_account_info(creds_info, scopes=scope)
-
 gc = gspread.authorize(creds)
-# Ensure the session directory exists
-SESSION_DIRECTORY = "session"  # Directory to store session files
-
-if not os.path.exists(SESSION_DIRECTORY):
-    os.makedirs(SESSION_DIRECTORY)  # Create session directory if it does not exist
 
 app = Flask(__name__, template_folder='.')
-
-# --- Google Sheets Configuration ---
 
 SPREADSHEET_NAME = 'My Instagram Data'
 CREDENTIALS_WORKSHEET = 'Account Credentials'
 USERNAME_COL = 0
 PASSWORD_COL = 1
 
-# --- Instaloader Configuration ---
+# --- Constants ---
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Safari/605.1.15",
@@ -42,128 +43,102 @@ USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Safari/605.1.15",
 ]
 
-# --- Retry and Delay Configuration ---
 MAX_LOGIN_RETRIES = 3
-INITIAL_LOGIN_DELAY = 10
-MAX_LOGIN_DELAY = 60
-SCRAPE_DELAY_RANGE = (15, 45)
-
-# --- Global Variables ---
 urls_to_scrape = []
 urls_processed_with_current_account = 0
 urls_per_account_limit = 22
 current_account_index = 0
 scraping_in_progress = False
-current_loader = None  # To store the Instaloader instance for the current account
+current_loader = None
 current_username = None
-SESSION_FILE_PREFIX = "session-"  # Standard Instaloader session file prefix
-scraped_data_queue = [] # Use a queue to handle multiple results
+scraped_data_queue = []
 
+# --- Helpers ---
 def get_credentials_from_sheet():
     try:
-        gc = gspread.authorize(creds)
         spreadsheet = gc.open_by_key('1pEmMrAw_PuevwYNWLwUPANz_MdV9PZODKUkuIwGR7Jg')
-        print("Successfully opened spreadsheet!")
         worksheet = spreadsheet.worksheet(CREDENTIALS_WORKSHEET)
         credentials_list = worksheet.get_all_values()
-        print(f"Retrieved credentials list: {credentials_list}")
+        print(f"[DEBUG] Retrieved credentials: {credentials_list}")
         return credentials_list[0:]
-    except gspread.exceptions.WorksheetNotFound as e:
-        print(f"Error: Worksheet '{CREDENTIALS_WORKSHEET}' not found: {e}")
-        return None
     except Exception as e:
-        print(f"Error retrieving credentials from Google Sheets: {e}")
+        print(f"[ERROR] Failed to retrieve credentials: {e}")
         return None
-
 
 def get_username_from_url(profile_url):
     parsed_url = urlparse(profile_url)
-    path_segments = parsed_url.path.strip('/').split('/')
-    if path_segments:
-        return path_segments[0]
-    return None
-
+    segments = parsed_url.path.strip('/').split('/')
+    return segments[0] if segments else None
 
 def scrape_profile_data(loader, profile_url, username):
     try:
         username_to_scrape = get_username_from_url(profile_url)
         if not username_to_scrape:
-            print(f"Error scraping with {username}: Could not extract username from URL '{profile_url}'.")
             return {"account": username, "error": "Invalid Profile URL"}
 
         profile = Profile.from_username(loader.context, username_to_scrape)
-        data = {
+        return {
             "username": profile.username,
             "followers": profile.followers,
             "following": profile.followees,
             "total_posts": profile.mediacount,
             "private": profile.is_private,
         }
-        print(f"Scraped data with {username} for '{profile_url}': {data}")
-        return data
     except exceptions.ProfileNotExistsException:
-        print(f"Error scraping with {username}: Profile '{username_to_scrape}' not found.")
         return {"error": f"Profile '{username_to_scrape}' not found"}
     except Exception as e:
-        print(f"Error scraping with {username} for '{profile_url}': {e}")
         return {"error": str(e)}
 
-
 def attempt_login(loader, username, password):
-    session_file = f"session/{SESSION_FILE_PREFIX}{username}"
-
+    session_file = os.path.join(SESSION_DIRECTORY, f"{SESSION_FILE_PREFIX}{username}")
     try:
-        # Attempt to load session from file
+        print(f"[DEBUG] Checking for session file at: {session_file}")
         if os.path.exists(session_file):
             loader.load_session_from_file(username, session_file)
-            print(f"Session loaded from file for {username}")
+            print(f"[DEBUG] Loaded session for {username}")
             return True
         else:
+            print(f"[DEBUG] No session found. Logging in fresh for {username}")
             loader.login(username, password)
             loader.save_session_to_file(session_file)
-            print(f"Logged in and session saved for {username}")
+            print(f"[DEBUG] Logged in and saved session to: {session_file}")
             return True
-    except exceptions.LoginRequiredException as e:
-        print(f"Login required for {username}, manual intervention required.")
+    except exceptions.LoginRequiredException:
+        print(f"[WARN] Login required for {username}, checkpoint might be required.")
         return False
     except Exception as e:
-        print(f"Error logging in for {username}: {e}")
+        print(f"[ERROR] Login failed for {username}: {e}")
         return False
 
-
-
-
 def logout_account(username):
-    session_file = f"session/{SESSION_FILE_PREFIX}{username}"  # Correct path
+    session_file = os.path.join(SESSION_DIRECTORY, f"{SESSION_FILE_PREFIX}{username}")
     try:
         if os.path.exists(session_file):
             os.remove(session_file)
-            print(f"Successfully removed session file for {username}, effectively logging out.")
+            print(f"[INFO] Removed session file for {username}")
         else:
-            print(f"No session file found for {username}.")
+            print(f"[DEBUG] No session file exists for {username}")
     except Exception as e:
-        print(f"Error deleting session file for {username}: {e}")
+        print(f"[ERROR] Error removing session for {username}: {e}")
 
-
-
+# --- Routes ---
 @app.route('/', methods=['GET'])
 def index():
     return render_template('i2.html', scraped_data=None, message=None, error=None)
 
-
 @app.route('/scrape', methods=['POST'])
 def scrape_process():
-    global current_account_index, scraping_in_progress, urls_to_scrape, urls_processed_with_current_account, urls_per_account_limit, current_loader, current_username, scraped_data_queue
+    global current_account_index, scraping_in_progress, urls_to_scrape, urls_processed_with_current_account
+    global current_loader, current_username, scraped_data_queue
 
     profile_url = request.form.get('profileUrl')
     if not profile_url:
-        return render_template('i2.html', error="Please enter a profile URL.", scraped_data=None, message=None)
+        return render_template('i2.html', error="Please enter a profile URL.", scraped_data=None)
 
     urls_to_scrape.append(profile_url)
-
     credentials_list = get_credentials_from_sheet()
     if not credentials_list:
-        return render_template('i2.html', error="Could not retrieve Instagram credentials.", scraped_data=None, message=None)
+        return render_template('i2.html', error="Could not retrieve Instagram credentials.", scraped_data=None)
 
     if current_account_index < len(credentials_list):
         username, password = credentials_list[current_account_index]
@@ -179,42 +154,31 @@ def scrape_process():
             if not logged_in:
                 logout_account(username)
                 current_account_index += 1
-                urls_processed_with_current_account = 0
                 scraping_in_progress = False
-                current_loader = None
-                current_username = None
-                return render_template('i2.html', error=f"Failed to log in with account {username}. Moving to the next account.", scraped_data=None, message=None)
-            else:
-                urls_processed_with_current_account = 0 # Reset count after successful (re)login
+                return render_template('i2.html', error=f"Login failed for {username}, trying next account.")
 
         if urls_processed_with_current_account < urls_per_account_limit and urls_to_scrape:
             url_to_process = urls_to_scrape.pop(0)
             data = scrape_profile_data(current_loader, url_to_process, username)
             urls_processed_with_current_account += 1
-            print(f"Scraped {urls_processed_with_current_account} URLs with account {username}")
-            return render_template('i2.html', scraped_data=data, message=None, error=None)
+            return render_template('i2.html', scraped_data=data)
 
         if urls_processed_with_current_account >= urls_per_account_limit or not urls_to_scrape:
             logout_account(username)
             current_account_index += 1
             urls_processed_with_current_account = 0
             scraping_in_progress = False
-            current_loader = None
-            current_username = None
-            message = f"Processed {urls_processed_with_current_account} URLs with account {username}. Moving to the next account." if urls_processed_with_current_account > 0 else f"No URLs processed with account {username}. Moving to the next account."
-            return render_template('i2.html', message=message, scraped_data=None, error=None)
-
-        return render_template('i2.html', message="Waiting for more URLs to process with the current account.", scraped_data=None, error=None)
+            return render_template('i2.html', message=f"Switched account from {username}.")
 
     else:
-        scraping_in_progress = False
+        # All accounts exhausted
         current_account_index = 0
-        urls_to_scrape = []
         urls_processed_with_current_account = 0
+        scraping_in_progress = False
         current_loader = None
         current_username = None
-        return render_template('i2.html', message="All accounts have been used for the current batch of URLs.", scraped_data=None, error=None)
-
+        return render_template('i2.html', message="All accounts used for current batch.")
 
 if __name__ == '__main__':
     app.run(debug=True)
+
