@@ -134,7 +134,7 @@ def attempt_login(loader, username, password):
 
 
 def logout_account(username):
-    session_file = f"{SESSION_FILE_PREFIX}{username}"
+    session_file = f"session/{SESSION_FILE_PREFIX}{username}"  # Correct path
     try:
         if os.path.exists(session_file):
             os.remove(session_file)
@@ -143,6 +143,7 @@ def logout_account(username):
             print(f"No session file found for {username}.")
     except Exception as e:
         print(f"Error deleting session file for {username}: {e}")
+
 
 
 @app.route('/', methods=['GET'])
