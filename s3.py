@@ -18,7 +18,7 @@ creds = Credentials.from_service_account_info(creds_info, scopes=scope)
 
 gc = gspread.authorize(creds)
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder='.')
 
 # --- Google Sheets Configuration ---
 
