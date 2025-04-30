@@ -179,6 +179,6 @@ def scrape_process():
         current_username = None
         return render_template('i2.html', message="All accounts used for current batch.")
 
-if _name_ == '_main_':
+if __name__ == '_main_':
     app.run(debug=True)
 
