@@ -7,6 +7,7 @@ import time
 import random
 import json
 import os
+import shutil
 
 # --- Path Configuration ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -88,27 +89,41 @@ def scrape_profile_data(loader, profile_url, username):
         return {"error": f"Profile '{username_to_scrape}' not found"}
     except Exception as e:
         return {"error": str(e)}
+def move_session_files():
+    """Move session files from the local directory to the persistent storage on Render."""
+    local_session_dir = "session/"
+    render_session_dir = "/mnt/data/sessions/"
+    
+    if not os.path.exists(render_session_dir):
+        os.makedirs(render_session_dir)  # Ensure the target directory exists
 
+    # Move session files from local directory to persistent storage
+    for file_name in os.listdir(local_session_dir):
+        local_file_path = os.path.join(local_session_dir, file_name)
+        if os.path.isfile(local_file_path):
+            shutil.move(local_file_path, os.path.join(render_session_dir, file_name))
+            print(f"Moved session file {file_name} to persistent storage.")
 def attempt_login(loader, username, password):
-    session_file = os.path.join(SESSION_DIRECTORY, f"{SESSION_FILE_PREFIX}{username}")
+    session_file = f"/mnt/data/sessions/{SESSION_FILE_PREFIX}{username}"  # Use persistent storage for session files
+
     try:
-        print(f"[DEBUG] Checking for session file at: {session_file}")
+        # Attempt to load session from the persistent storage
         if os.path.exists(session_file):
             loader.load_session_from_file(username, session_file)
-            print(f"[DEBUG] Loaded session for {username}")
+            print(f"Session loaded from file for {username}")
             return True
         else:
-            print(f"[DEBUG] No session found. Logging in fresh for {username}")
             loader.login(username, password)
             loader.save_session_to_file(session_file)
-            print(f"[DEBUG] Logged in and saved session to: {session_file}")
+            print(f"Logged in and session saved for {username}")
             return True
-    except exceptions.LoginRequiredException:
-        print(f"[WARN] Login required for {username}, checkpoint might be required.")
+    except exceptions.LoginRequiredException as e:
+        print(f"Login required for {username}, manual intervention required.")
         return False
     except Exception as e:
-        print(f"[ERROR] Login failed for {username}: {e}")
+        print(f"Error logging in for {username}: {e}")
         return False
+
 
 def logout_account(username):
     session_file = os.path.join(SESSION_DIRECTORY, f"{SESSION_FILE_PREFIX}{username}")
@@ -179,6 +194,8 @@ def scrape_process():
         current_username = None
         return render_template('i2.html', message="All accounts used for current batch.")
 
-if __name__ == '_main_':
+if __name__ == '__main__':
+    move_session_files()  # Move session files on app startup
     app.run(debug=True)
+
 
